@@ -1,0 +1,50 @@
+@import "tailwindcss";
+
+/* ── Reset ───────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #F5EFE6;
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  border: none;
+  text-align: left;
+}
+
+/* ── Custom keyframes ────────────────────────────────────── */
+@keyframes slide-down {
+  from { opacity: 0; transform: translateY(-16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes wiggle {
+  0%, 100% { transform: rotate(0deg); }
+  25%       { transform: rotate(-12deg); }
+  75%       { transform: rotate(12deg); }
+}
+
+/* ── Tailwind v4: register custom utilities + animations ─── */
+@theme {
+  --animate-slide-down: slide-down 0.3s ease-out both;
+  --animate-wiggle:     wiggle 0.4s ease-in-out;
+}
+
+/* ── Utility classes that use the custom keyframes ──────── */
+.animate-slide-down { animation: var(--animate-slide-down); }
+.animate-wiggle     { animation: var(--animate-wiggle); }
+
+/* ── Hide scrollbars everywhere ─────────────────────────── */
+* { scrollbar-width: none; }
+*::-webkit-scrollbar { display: none; }
