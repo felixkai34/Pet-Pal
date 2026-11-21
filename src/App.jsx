@@ -6,7 +6,7 @@ import {
   Plus, Trash2, Send, Zap, Clock, Weight, Syringe,
   FileText, Cat, Dog, Loader2,
   X, ShieldCheck, TrendingUp, Activity, Sparkles,
-  PawPrint, PhoneCall, Calendar, RotateCcw
+  PawPrint, PhoneCall, Calendar, RotateCcw, Scale
 } from "lucide-react";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -26,6 +26,11 @@ const INITIAL_PET_DATA = {
   1: {
     foodLevel: 78,
     waterLevel: 90,
+    fedToday: 120,
+    waterToday: 450,
+    bowlFood: 40,
+    bowlStatus: "ready", // 'empty' | 'ready' | 'leftovers'
+    caloriesConsumed: 420,
     schedules: [
       { id: 101, label: "Breakfast",       time: "08:00", ampm: "AM", portion: 100, active: true },
       { id: 102, label: "Lunch",           time: "01:30", ampm: "PM", portion: 80,  active: true },
@@ -46,6 +51,7 @@ const INITIAL_PET_DATA = {
       { id: 304, date: "Mar 15, 2026", type: "Vaccination",  note: "DHPP combo administered. Next in 1 year." },
     ],
     activity: [
+      { id: 400, time: "08:20 AM, Nov 20", label: "Bella ate 80g in bowl (+280 kcal)", amount: "+280 kcal", type: "eat" },
       { id: 401, time: "08:02 AM, Nov 20", label: "Auto-feed: Breakfast", amount: "100g", type: "auto" },
       { id: 402, time: "07:58 AM, Nov 19", label: "Auto-feed: Dinner",    amount: "100g", type: "auto" },
       { id: 403, time: "04:00 PM, Nov 19", label: "Remote feed by Owner", amount: "50g",  type: "remote" },
@@ -54,6 +60,11 @@ const INITIAL_PET_DATA = {
   2: {
     foodLevel: 65,
     waterLevel: 82,
+    fedToday: 60,
+    waterToday: 180,
+    bowlFood: 15,
+    bowlStatus: "leftovers",
+    caloriesConsumed: 180,
     schedules: [
       { id: 501, label: "Morning Feed", time: "07:30", ampm: "AM", portion: 35, active: true },
       { id: 502, label: "Noon Nibble",  time: "01:00", ampm: "PM", portion: 25, active: true },
@@ -70,6 +81,7 @@ const INITIAL_PET_DATA = {
       { id: 703, date: "Feb 12, 2026", type: "Vaccination",  note: "Rabies booster administered." },
     ],
     activity: [
+      { id: 800, time: "07:45 AM, Nov 20", label: "Milo ate 20g in bowl (+70 kcal)", amount: "+70 kcal", type: "eat" },
       { id: 801, time: "07:30 AM, Nov 20", label: "Auto-feed: Morning Feed", amount: "35g", type: "auto" },
       { id: 802, time: "06:30 PM, Nov 19", label: "Auto-feed: Evening Feed", amount: "35g", type: "auto" },
     ],
@@ -129,16 +141,25 @@ const Toast = ({ msg, type = "success", onClose }) => {
     return () => clearTimeout(t);
   }, [onClose]);
 
-  const bg = type === "water" 
-    ? "bg-teal-600" 
-    : type === "info" 
-    ? "bg-blue-600" 
-    : "bg-emerald-600";
+  const bg =
+    type === "error"
+      ? "bg-red-600"
+      : type === "water"
+      ? "bg-teal-600"
+      : type === "info"
+      ? "bg-blue-600"
+      : "bg-emerald-600";
 
   return (
     <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] animate-slide-down">
       <div className={`${bg} text-white text-sm font-medium px-5 py-3.5 rounded-2xl shadow-2xl flex items-center gap-3 min-w-80`}>
-        {type === "water" ? <Droplets size={18} className="shrink-0" /> : <CheckCircle2 size={18} className="shrink-0" />}
+        {type === "error" ? (
+          <AlertTriangle size={18} className="shrink-0" />
+        ) : type === "water" ? (
+          <Droplets size={18} className="shrink-0" />
+        ) : (
+          <CheckCircle2 size={18} className="shrink-0" />
+        )}
         <span className="flex-1">{msg}</span>
         <button onClick={onClose} className="opacity-70 hover:opacity-100 transition-opacity">
           <X size={15} />
@@ -160,7 +181,7 @@ const EmergencyModal = ({ pet, onDismiss }) => {
           </div>
           <div>
             <p className="text-white font-bold">🚨 Urgent Health Alert</p>
-            <p className="text-red-200 text-sm">Pet Pal IoT · Just now</p>
+            <p className="text-red-200 text-sm">PawSync IoT · Just now</p>
           </div>
         </div>
         <div className="px-6 py-5 space-y-4">
@@ -535,6 +556,12 @@ const HomeTab = ({
   data,
   onFeed,
   onDispenseWater,
+  onRefillFood,
+  onRefillWater,
+  onPetAteAll,
+  onPetAteHalf,
+  onFeedError,
+  onWaterError,
 }) => {
   const [foodPortion, setFoodPortion] = useState("Medium (100g)");
   const [waterPortion, setWaterPortion] = useState("200ml");
@@ -543,20 +570,40 @@ const HomeTab = ({
 
   const foodPortions = ["Small (50g)", "Medium (100g)", "Large (150g)"];
   const foodGrams = { "Small (50g)": 50, "Medium (100g)": 100, "Large (150g)": 150 };
+  const foodDrains = { "Small (50g)": 3, "Medium (100g)": 6, "Large (150g)": 9 };
 
   const waterPortions = ["100ml", "200ml", "300ml"];
+  const waterDrains = { "100ml": 4, "200ml": 8, "300ml": 12 };
 
   const handleFeed = () => {
     if (dispensingFood || dispensingWater) return;
+    const g = foodGrams[foodPortion];
+    const drain = foodDrains[foodPortion];
+
+    // Empty check & Protection
+    if (data.foodLevel <= 0 || data.foodLevel < drain) {
+      onFeedError("❌ Food Tank Empty! Cannot dispense. Please refill the dispenser.");
+      return;
+    }
+
     setDispensingFood(true);
     setTimeout(() => {
       setDispensingFood(false);
-      onFeed(foodGrams[foodPortion]);
+      onFeed(g);
     }, 1500);
   };
 
   const handleWater = () => {
     if (dispensingFood || dispensingWater) return;
+    const ml = parseInt(waterPortion) || 200;
+    const drain = waterDrains[waterPortion] || 8;
+
+    // Empty check & Protection
+    if (data.waterLevel <= 0 || data.waterLevel < drain) {
+      onWaterError("❌ Water Reservoir Empty! Cannot dispense. Please refill the reservoir.");
+      return;
+    }
+
     setDispensingWater(true);
     setTimeout(() => {
       setDispensingWater(false);
@@ -564,18 +611,36 @@ const HomeTab = ({
     }, 1500);
   };
 
-  const { foodLevel, waterLevel, activity } = data;
+  const { foodLevel, waterLevel, activity, fedToday, waterToday, bowlFood, caloriesConsumed, bowlStatus } = data;
+
+  // Dynamic progress bar colors & warnings
+  const foodBarColor =
+    foodLevel === 0
+      ? "#ef4444"
+      : foodLevel <= 25
+      ? "#f59e0b"
+      : "#E07A5F";
+
+  const waterBarColor =
+    waterLevel === 0
+      ? "#ef4444"
+      : waterLevel <= 25
+      ? "#f59e0b"
+      : "#14b8a6";
+
+  const calorieTarget = pet.kcal || 850;
+  const caloriePercent = Math.min(100, Math.round(((caloriesConsumed || 0) / calorieTarget) * 100));
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
       {/* ── LEFT column (Status & Remote Dispense Controls) ── */}
       <div className="lg:col-span-6 space-y-6">
-        {/* Device Status */}
+        {/* Device Status & Tank Sensors */}
         <Card className="p-6">
-          <SectionTitle icon={Wifi} iconClass="text-blue-500">Smart Bowl Status</SectionTitle>
+          <SectionTitle icon={Wifi} iconClass="text-blue-500">Smart Bowl Status & Tank Sensors</SectionTitle>
           <div className="flex items-center justify-between mb-5">
             <div>
-              <p className="font-semibold text-stone-800">Pet Pal Hub · {pet.name}'s Feeder</p>
+              <p className="font-semibold text-stone-800">PawSync Hub · {pet.name}'s Feeder</p>
               <p className="text-sm text-emerald-600 font-medium flex items-center gap-1.5 mt-0.5">
                 <span className="w-2 h-2 bg-emerald-500 rounded-full inline-block animate-pulse" />
                 Connected via Wi-Fi · Signal Strong (-54 dBm)
@@ -583,36 +648,94 @@ const HomeTab = ({
             </div>
             <Badge variant="green">Online</Badge>
           </div>
-          <div className="space-y-4">
-            <div>
+
+          <div className="space-y-5">
+            {/* Food Tank */}
+            <div className="bg-stone-50/70 p-4 rounded-xl border border-stone-100">
               <div className="flex justify-between items-center mb-1.5">
-                <span className="text-sm text-stone-600 font-medium flex items-center gap-1.5">
-                  <Package size={14} className="text-stone-500" /> Food Tank Level
-                </span>
-                <span className="text-sm font-bold text-stone-800">{foodLevel}%</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-stone-700 font-semibold flex items-center gap-1.5">
+                    <Package size={15} className="text-amber-600" /> Food Tank Level
+                  </span>
+                  <span className={`text-xs font-bold ${foodLevel === 0 ? "text-red-600" : foodLevel <= 25 ? "text-amber-600" : "text-stone-800"}`}>
+                    ({foodLevel}%)
+                  </span>
+                </div>
+                <button
+                  onClick={onRefillFood}
+                  className="text-xs bg-amber-50 hover:bg-amber-100 text-amber-700 font-semibold px-2.5 py-1 rounded-lg border border-amber-200 transition-colors flex items-center gap-1 shadow-sm"
+                  title="Quick refill food tank to 100%"
+                >
+                  <RotateCcw size={12} />
+                  <span>Refill Tank</span>
+                </button>
               </div>
-              <div className="h-3 bg-stone-100 rounded-full overflow-hidden">
+
+              {/* Dynamic Food Warnings */}
+              {foodLevel === 0 ? (
+                <div className="mb-2 text-[11px] font-bold text-red-600 bg-red-50 border border-red-200 px-2.5 py-1 rounded-md flex items-center gap-1.5 animate-pulse">
+                  <AlertTriangle size={12} />
+                  <span>🚨 Tank Empty — Refill required</span>
+                </div>
+              ) : foodLevel <= 25 ? (
+                <div className="mb-2 text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-md flex items-center gap-1.5">
+                  <AlertTriangle size={12} />
+                  <span>⚠️ Low Level — Please refill soon</span>
+                </div>
+              ) : null}
+
+              <div className="h-3 bg-stone-200/80 rounded-full overflow-hidden">
                 <div
                   className="h-full rounded-full transition-all duration-700"
                   style={{
                     width: `${foodLevel}%`,
-                    background: foodLevel > 50 ? "#10b981" : foodLevel > 25 ? "#f59e0b" : "#ef4444",
+                    backgroundColor: foodBarColor,
                   }}
                 />
               </div>
             </div>
 
-            <div>
+            {/* Fresh Water Reservoir */}
+            <div className="bg-stone-50/70 p-4 rounded-xl border border-stone-100">
               <div className="flex justify-between items-center mb-1.5">
-                <span className="text-sm text-stone-600 font-medium flex items-center gap-1.5">
-                  <Droplets size={14} className="text-teal-500" /> Fresh Water Reservoir
-                </span>
-                <span className="text-sm font-bold text-stone-800">{waterLevel}%</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-stone-700 font-semibold flex items-center gap-1.5">
+                    <Droplets size={15} className="text-teal-600" /> Fresh Water Reservoir
+                  </span>
+                  <span className={`text-xs font-bold ${waterLevel === 0 ? "text-red-600" : waterLevel <= 25 ? "text-amber-600" : "text-stone-800"}`}>
+                    ({waterLevel}%)
+                  </span>
+                </div>
+                <button
+                  onClick={onRefillWater}
+                  className="text-xs bg-teal-50 hover:bg-teal-100 text-teal-700 font-semibold px-2.5 py-1 rounded-lg border border-teal-200 transition-colors flex items-center gap-1 shadow-sm"
+                  title="Quick refill water reservoir to 100%"
+                >
+                  <RotateCcw size={12} />
+                  <span>Refill Tank</span>
+                </button>
               </div>
-              <div className="h-3 bg-stone-100 rounded-full overflow-hidden">
+
+              {/* Dynamic Water Warnings */}
+              {waterLevel === 0 ? (
+                <div className="mb-2 text-[11px] font-bold text-red-600 bg-red-50 border border-red-200 px-2.5 py-1 rounded-md flex items-center gap-1.5 animate-pulse">
+                  <AlertTriangle size={12} />
+                  <span>🚨 Tank Empty — Refill required</span>
+                </div>
+              ) : waterLevel <= 25 ? (
+                <div className="mb-2 text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-md flex items-center gap-1.5">
+                  <AlertTriangle size={12} />
+                  <span>⚠️ Low Level — Please refill soon</span>
+                </div>
+              ) : null}
+
+              <div className="h-3 bg-stone-200/80 rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-teal-500 rounded-full transition-all duration-700"
-                  style={{ width: `${waterLevel}%` }}
+                  className="h-full rounded-full transition-all duration-700"
+                  style={{
+                    width: `${waterLevel}%`,
+                    backgroundColor: waterBarColor,
+                  }}
                 />
               </div>
             </div>
@@ -624,12 +747,17 @@ const HomeTab = ({
           {/* Food Control */}
           <Card className="p-5 flex flex-col justify-between border-amber-100 bg-gradient-to-b from-white to-amber-50/20">
             <div>
-              <div className="flex items-center gap-2 mb-2 text-amber-600">
-                <Utensils size={16} />
-                <h3 className="font-bold text-stone-800 text-sm">Remote Food Dispenser</h3>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 text-amber-600">
+                  <Utensils size={16} />
+                  <h3 className="font-bold text-stone-800 text-sm">Remote Food Dispenser</h3>
+                </div>
+                {foodLevel === 0 && (
+                  <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded">Empty</span>
+                )}
               </div>
               <p className="text-xs text-stone-500 mb-3">Dispense dry kibble to {pet.name}'s bowl.</p>
-              
+
               <div className="grid grid-cols-3 gap-1.5 mb-4">
                 {foodPortions.map((p) => (
                   <button
@@ -655,11 +783,15 @@ const HomeTab = ({
               className={`w-full py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${
                 dispensingFood
                   ? "bg-amber-300 text-white cursor-not-allowed"
+                  : foodLevel === 0
+                  ? "bg-stone-300 text-stone-500 hover:bg-stone-400 active:scale-95"
                   : "bg-amber-500 hover:bg-amber-600 text-white shadow-lg shadow-amber-200 active:scale-95"
               }`}
             >
               {dispensingFood ? (
                 <><Loader2 size={16} className="animate-spin" /> Dispensing Food...</>
+              ) : foodLevel === 0 ? (
+                <><AlertTriangle size={16} /> Empty — Refill First</>
               ) : (
                 <><Zap size={16} /> Feed Now</>
               )}
@@ -669,12 +801,17 @@ const HomeTab = ({
           {/* Water Control */}
           <Card className="p-5 flex flex-col justify-between border-teal-100 bg-gradient-to-b from-white to-teal-50/20">
             <div>
-              <div className="flex items-center gap-2 mb-2 text-teal-600">
-                <Droplets size={16} />
-                <h3 className="font-bold text-stone-800 text-sm">Remote Water Control</h3>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 text-teal-600">
+                  <Droplets size={16} />
+                  <h3 className="font-bold text-stone-800 text-sm">Remote Water Control</h3>
+                </div>
+                {waterLevel === 0 && (
+                  <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded">Empty</span>
+                )}
               </div>
               <p className="text-xs text-stone-500 mb-3">Refill fresh filtered water bowl.</p>
-              
+
               <div className="grid grid-cols-3 gap-1.5 mb-4">
                 {waterPortions.map((w) => (
                   <button
@@ -698,11 +835,15 @@ const HomeTab = ({
               className={`w-full py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${
                 dispensingWater
                   ? "bg-teal-300 text-white cursor-not-allowed"
+                  : waterLevel === 0
+                  ? "bg-stone-300 text-stone-500 hover:bg-stone-400 active:scale-95"
                   : "bg-teal-600 hover:bg-teal-700 text-white shadow-lg shadow-teal-100 active:scale-95"
               }`}
             >
               {dispensingWater ? (
                 <><Loader2 size={16} className="animate-spin" /> Dispensing Water...</>
+              ) : waterLevel === 0 ? (
+                <><AlertTriangle size={16} /> Empty — Refill First</>
               ) : (
                 <><Droplets size={16} /> Dispense Water</>
               )}
@@ -711,9 +852,9 @@ const HomeTab = ({
         </div>
       </div>
 
-      {/* ── RIGHT column (Pet Summary & Activity Log) ── */}
+      {/* ── RIGHT column (Pet Summary, Bowl Sensor & Activity Log) ── */}
       <div className="lg:col-span-6 space-y-6">
-        {/* Pet Quick Stats */}
+        {/* Pet Quick Stats & Live Today Metrics */}
         <Card className="p-6">
           <div className="flex items-center gap-4 mb-5">
             <div className="w-16 h-16 bg-gradient-to-br from-amber-100 to-amber-50 rounded-2xl flex items-center justify-center text-4xl shadow-sm">
@@ -728,22 +869,134 @@ const HomeTab = ({
             </div>
             <TrendingUp size={18} className="text-emerald-500" />
           </div>
-          <div className="grid grid-cols-3 gap-3">
-            {[
-              { label: "Fed Today",   value: "2x",          sub: "120g total"   },
-              { label: "Daily Kcal",  value: `${pet.kcal}`, sub: "kcal target"  },
-              { label: "Weight",      value: `${pet.weight} kg`, sub: "optimal" },
-            ].map((s) => (
-              <div key={s.label} className="bg-stone-50 rounded-xl p-3.5 text-center">
-                <p className="text-lg font-bold text-stone-800">{s.value}</p>
-                <p className="text-xs text-stone-500 font-medium mt-0.5">{s.label}</p>
-                <p className="text-[11px] text-stone-400">{s.sub}</p>
-              </div>
-            ))}
+
+          {/* 4 Dynamic Metric Sub-Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            <div className="bg-amber-50/60 border border-amber-100 rounded-xl p-3 text-center">
+              <p className="text-lg font-bold text-amber-700">{fedToday || 0}g</p>
+              <p className="text-xs text-stone-600 font-semibold mt-0.5">Fed Today</p>
+              <p className="text-[10px] text-stone-400">dispensed</p>
+            </div>
+
+            <div className="bg-teal-50/60 border border-teal-100 rounded-xl p-3 text-center">
+              <p className="text-lg font-bold text-teal-700">{waterToday || 0}ml</p>
+              <p className="text-xs text-stone-600 font-semibold mt-0.5">Water Today</p>
+              <p className="text-[10px] text-stone-400">dispensed</p>
+            </div>
+
+            <div className="bg-stone-50 border border-stone-100 rounded-xl p-3 text-center">
+              <p className="text-lg font-bold text-stone-800">{caloriesConsumed || 0}</p>
+              <p className="text-xs text-stone-600 font-semibold mt-0.5">Calories (kcal)</p>
+              <p className="text-[10px] text-stone-400">goal: {pet.kcal}</p>
+            </div>
+
+            <div className="bg-stone-50 border border-stone-100 rounded-xl p-3 text-center">
+              <p className="text-lg font-bold text-stone-800">{pet.weight} kg</p>
+              <p className="text-xs text-stone-600 font-semibold mt-0.5">Pet Weight</p>
+              <p className="text-[10px] text-stone-400">optimal</p>
+            </div>
           </div>
-          <div className="mt-4 bg-teal-50/70 border border-teal-100 rounded-xl px-4 py-2.5 text-xs text-teal-800 flex items-center gap-2">
-            <Sparkles size={14} className="text-teal-600 shrink-0" />
-            <span>Smart bowl sensors confirm {pet.name} has healthy hydration and balanced feeding cadence.</span>
+        </Card>
+
+        {/* Smart Bowl Load-Cell Sensor & Live Calorie Tracking */}
+        <Card className="p-6 border-stone-200">
+          <div className="flex items-center justify-between mb-4">
+            <SectionTitle icon={Scale} iconClass="text-emerald-600">Smart Bowl Load-Cell Sensor</SectionTitle>
+            <Badge variant="green">Live ±1g Telemetry</Badge>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+            {/* Bowl Weight Status */}
+            <div className="bg-stone-50 p-4 rounded-xl border border-stone-100 flex flex-col justify-between">
+              <div>
+                <p className="text-xs text-stone-500 font-medium mb-1">Current Food in Bowl</p>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-3xl font-black text-stone-800">{bowlFood || 0}</span>
+                  <span className="text-sm font-semibold text-stone-500">grams</span>
+                </div>
+              </div>
+
+              <div className="mt-3">
+                {bowlFood === 0 ? (
+                  <Badge variant="gray">Empty Bowl (0g)</Badge>
+                ) : bowlStatus === "leftovers" ? (
+                  <Badge variant="amber">Leftovers Detected ({bowlFood}g)</Badge>
+                ) : (
+                  <Badge variant="green">Food Ready ({bowlFood}g)</Badge>
+                )}
+              </div>
+            </div>
+
+            {/* Calorie Intake Tracker */}
+            <div className="bg-stone-50 p-4 rounded-xl border border-stone-100 flex flex-col justify-between">
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <p className="text-xs text-stone-500 font-medium">Calories Consumed Today</p>
+                  <span className="text-xs font-bold text-stone-700">{caloriesConsumed || 0} / {calorieTarget} kcal</span>
+                </div>
+                <div className="h-2.5 bg-stone-200 rounded-full overflow-hidden mt-2">
+                  <div
+                    className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+                    style={{ width: `${caloriePercent}%` }}
+                  />
+                </div>
+              </div>
+              <p className="text-[11px] text-stone-400 mt-2">
+                {caloriePercent}% of daily target reached (1g kibble ≈ 3.5 kcal)
+              </p>
+            </div>
+          </div>
+
+          {/* Interactive Pet Eating Simulator (For Live Pitch Demo) */}
+          <div className="bg-amber-50/40 border border-amber-200/70 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-bold text-stone-800 uppercase tracking-wider flex items-center gap-1.5">
+                <Utensils size={13} className="text-amber-600" />
+                <span>Simulate Pet Eating</span>
+                <span className="text-[10px] font-normal lowercase text-stone-500">(load-cell demo)</span>
+              </p>
+              <span className="text-[11px] text-stone-500">
+                In Bowl: <strong className="text-stone-800">{bowlFood || 0}g</strong>
+              </span>
+            </div>
+
+            <p className="text-xs text-stone-600 mb-3">
+              Trigger real-time bowl weight sensor detection when {pet.name} eats from the smart bowl.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                onClick={onPetAteAll}
+                disabled={!bowlFood || bowlFood <= 0}
+                className={`py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
+                  bowlFood > 0
+                    ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-200 active:scale-95"
+                    : "bg-stone-200 text-stone-400 cursor-not-allowed"
+                }`}
+              >
+                <CheckCircle2 size={14} />
+                <span>Pet Ate All (100%)</span>
+              </button>
+
+              <button
+                onClick={onPetAteHalf}
+                disabled={!bowlFood || bowlFood <= 0}
+                className={`py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
+                  bowlFood > 0
+                    ? "bg-amber-500 hover:bg-amber-600 text-white shadow-md shadow-amber-200 active:scale-95"
+                    : "bg-stone-200 text-stone-400 cursor-not-allowed"
+                }`}
+              >
+                <Utensils size={14} />
+                <span>Pet Ate Half (Leftovers)</span>
+              </button>
+            </div>
+
+            {(!bowlFood || bowlFood <= 0) && (
+              <p className="text-[11px] text-stone-500 mt-2 text-center bg-white/70 py-1.5 rounded-lg border border-stone-100">
+                💡 Bowl is currently empty. Click <strong>"Feed Now"</strong> above to dispense food first!
+              </p>
+            )}
           </div>
         </Card>
 
@@ -756,12 +1009,16 @@ const HomeTab = ({
                 <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
                   a.type === "water"
                     ? "bg-teal-50"
+                    : a.type === "eat"
+                    ? "bg-emerald-50"
                     : a.type === "remote"
                     ? "bg-amber-50"
                     : "bg-blue-50"
                 }`}>
                   {a.type === "water" ? (
                     <Droplets size={15} className="text-teal-600" />
+                  ) : a.type === "eat" ? (
+                    <Utensils size={15} className="text-emerald-600" />
                   ) : a.type === "remote" ? (
                     <Zap size={15} className="text-amber-500" />
                   ) : (
@@ -772,7 +1029,15 @@ const HomeTab = ({
                   <p className="text-sm font-semibold text-stone-700 truncate">{a.label}</p>
                   <p className="text-xs text-stone-400">{a.time}</p>
                 </div>
-                <Badge variant={a.type === "water" ? "teal" : a.type === "remote" ? "amber" : "blue"}>
+                <Badge variant={
+                  a.type === "water"
+                    ? "teal"
+                    : a.type === "eat"
+                    ? "green"
+                    : a.type === "remote"
+                    ? "amber"
+                    : "blue"
+                }>
                   {a.amount}
                 </Badge>
               </div>
@@ -846,7 +1111,7 @@ const ScheduleTab = ({ pet, schedules, onToggle, onDelete, onAdd }) => {
               placeholder="Portion (g)"
               className="text-sm border border-stone-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-amber-300 bg-white"
               value={form.portion}
-              onChange={(e) => setForm((f) => ({ ...f, portion: e.target.value }))}
+              onChange={(e) => setForm((f) => ({ ...f, portion: Number(e.target.value) }))}
             />
             <div className="flex gap-2">
               <button
@@ -1145,7 +1410,7 @@ const HealthTab = ({
 };
 
 // ─── Tab: AI VET ──────────────────────────────────────────────────────────────
-const AiVetTab = ({ pet, vaccines }) => {
+const AiVetTab = ({ pet, vaccines, caloriesConsumed }) => {
   const [messages, setMessages] = useState([
     {
       id: 1, role: "ai",
@@ -1177,16 +1442,16 @@ const AiVetTab = ({ pet, vaccines }) => {
 
   const generateResponse = (msg) => {
     const nextVaccine = vaccines.find((v) => !v.done) || vaccines[0];
-    
+
     if (msg.includes("ate less today")) {
-      return `Based on ${pet.name}'s Smart Feeder data today, she ate slightly below her average target. An isolated light day is common due to room temperature, nap cycles, or minor pickiness. As long as bowl activity stays active and she remains energetic, monitor for the next 24 hours. If she skips 2 consecutive meals, our Emergency Alert will alert you! 🐾`;
+      return `Based on ${pet.name}'s Smart Feeder data today, ${pet.name} has consumed **${caloriesConsumed || 420} kcal** of their **${pet.kcal} kcal** goal. An isolated light day is common due to room temperature, nap cycles, or minor pickiness. As long as bowl activity stays active and they remain energetic, monitor for the next 24 hours. If they skip 2 consecutive meals, our Emergency Alert system will notify you! 🐾`;
     }
     if (msg.includes("Recommended daily portion")) {
-      const dailyGrams = Math.round(pet.kcal / 3.2);
-      return `For ${pet.name} at **${pet.weight} kg** (${pet.breed}), our nutritional model recommends **${pet.kcal} kcal/day**. With a standard premium kibble (~3,200 kcal/kg), that translates to approximately **${dailyGrams}g per day**, divided into 2-3 balanced meals via your Smart Bowl schedule. ✅`;
+      const dailyGrams = Math.round(pet.kcal / 3.5);
+      return `For ${pet.name} at **${pet.weight} kg** (${pet.breed}), our nutritional model recommends **${pet.kcal} kcal/day**. With a standard premium kibble (~3,500 kcal/kg or 3.5 kcal/g), that translates to approximately **${dailyGrams}g per day**, divided into 2-3 balanced meals via your Smart Bowl schedule. ✅`;
     }
     if (msg.includes("next vaccine")) {
-      return `${pet.name}'s next upcoming immunization is **${nextVaccine.name}** (${nextVaccine.due}). You can reschedule this anytime in the Health & Vaccines tab, and Pet Pal will remind you 3 days prior! 💉`;
+      return `${pet.name}'s next upcoming immunization is **${nextVaccine.name}** (${nextVaccine.due}). You can reschedule this anytime in the Health & Vaccines tab, and PawSync will remind you 3 days prior! 💉`;
     }
     return `I've analyzed your question regarding "${msg}" against ${pet.name}'s active telemetry (${pet.weight} kg, ${pet.breed}, daily target ${pet.kcal} kcal). All health metrics and feeder records are in optimal ranges. Let me know if you would like me to adjust portion sizes or log a new symptom! 🐾`;
   };
@@ -1309,7 +1574,7 @@ const AiVetTab = ({ pet, vaccines }) => {
             <p className="text-xs font-bold text-blue-700 uppercase tracking-wider">Proactive AI Insight</p>
           </div>
           <p className="text-sm text-blue-900 leading-relaxed">
-            {pet.name}'s eating speed and bowl approach intervals have remained consistent this week. Daily target of <strong>{pet.kcal} kcal</strong> is right on target.
+            {pet.name}'s eating speed and bowl approach intervals have remained consistent this week. Daily target of <strong>{pet.kcal} kcal</strong> is monitored via the Smart Bowl load cell.
           </p>
         </Card>
 
@@ -1358,6 +1623,11 @@ export default function App() {
   const activeData = petData[activePet.id] || {
     foodLevel: 80,
     waterLevel: 85,
+    fedToday: 0,
+    waterToday: 0,
+    bowlFood: 0,
+    bowlStatus: "empty",
+    caloriesConsumed: 0,
     schedules: [],
     vaccines: [],
     records: [],
@@ -1382,11 +1652,23 @@ export default function App() {
     }));
   };
 
-  // 1. Food dispense
+  // 1. Food dispense with empty-tank protection
   const handleFeed = (grams) => {
     const drain = grams === 50 ? 3 : grams === 100 ? 6 : 9;
+
+    if (activeData.foodLevel <= 0 || activeData.foodLevel < drain) {
+      setToast({
+        msg: "❌ Food Tank Empty! Cannot dispense. Please refill the dispenser.",
+        type: "error",
+      });
+      return;
+    }
+
     updateActiveData((data) => ({
       foodLevel: Math.max(0, data.foodLevel - drain),
+      fedToday: (data.fedToday || 0) + grams,
+      bowlFood: (data.bowlFood || 0) + grams,
+      bowlStatus: "ready",
       activity: [
         {
           id: Date.now(),
@@ -1398,15 +1680,28 @@ export default function App() {
         ...data.activity,
       ],
     }));
-    setToast({ msg: `✅ Successful Feed! Dispensed ${grams}g to ${activePet.name}'s bowl.`, type: "success" });
+    setToast({
+      msg: `✅ Successful Feed! Dispensed ${grams}g to ${activePet.name}'s bowl.`,
+      type: "success",
+    });
   };
 
-  // 2. Water dispense
+  // 2. Water dispense with empty-reservoir protection
   const handleDispenseWater = (portionStr) => {
     const ml = parseInt(portionStr) || 200;
     const drain = ml === 100 ? 4 : ml === 200 ? 8 : 12;
+
+    if (activeData.waterLevel <= 0 || activeData.waterLevel < drain) {
+      setToast({
+        msg: "❌ Water Reservoir Empty! Cannot dispense. Please refill the reservoir.",
+        type: "error",
+      });
+      return;
+    }
+
     updateActiveData((data) => ({
       waterLevel: Math.max(0, data.waterLevel - drain),
+      waterToday: (data.waterToday || 0) + ml,
       activity: [
         {
           id: Date.now(),
@@ -1418,10 +1713,109 @@ export default function App() {
         ...data.activity,
       ],
     }));
-    setToast({ msg: `💧 Fresh Water Dispensed! Refilled ${ml}ml into ${activePet.name}'s bowl`, type: "water" });
+    setToast({
+      msg: `💧 Fresh Water Dispensed! Refilled ${ml}ml into ${activePet.name}'s bowl`,
+      type: "water",
+    });
   };
 
-  // 3. Schedules
+  // 3. Quick Refill Handlers
+  const handleRefillFood = () => {
+    updateActiveData((data) => ({
+      foodLevel: 100,
+      activity: [
+        {
+          id: Date.now(),
+          time: fmtFull(new Date()),
+          label: "Food Tank refilled to 100%",
+          amount: "100%",
+          type: "auto",
+        },
+        ...data.activity,
+      ],
+    }));
+    setToast({
+      msg: `✅ Food Tank refilled to 100% for ${activePet.name}'s feeder!`,
+      type: "success",
+    });
+  };
+
+  const handleRefillWater = () => {
+    updateActiveData((data) => ({
+      waterLevel: 100,
+      activity: [
+        {
+          id: Date.now(),
+          time: fmtFull(new Date()),
+          label: "Water Reservoir refilled to 100%",
+          amount: "100%",
+          type: "water",
+        },
+        ...data.activity,
+      ],
+    }));
+    setToast({
+      msg: `✅ Water Reservoir refilled to 100% for ${activePet.name}'s feeder!`,
+      type: "water",
+    });
+  };
+
+  // 4. Pet Eating Simulation Handlers (Bowl Load-cell)
+  const handlePetAteAll = () => {
+    const eatenG = activeData.bowlFood || 0;
+    if (eatenG <= 0) return;
+    const kcalAdded = Math.round(eatenG * 3.5);
+
+    updateActiveData((data) => ({
+      bowlFood: 0,
+      bowlStatus: "empty",
+      caloriesConsumed: (data.caloriesConsumed || 0) + kcalAdded,
+      activity: [
+        {
+          id: Date.now(),
+          time: fmtFull(new Date()),
+          label: `${activePet.name} finished ${eatenG}g in bowl (+${kcalAdded} kcal)`,
+          amount: `+${kcalAdded} kcal`,
+          type: "eat",
+        },
+        ...data.activity,
+      ],
+    }));
+    setToast({
+      msg: `🥣 ${activePet.name} finished all food in bowl (+${kcalAdded} kcal logged)!`,
+      type: "success",
+    });
+  };
+
+  const handlePetAteHalf = () => {
+    const currentBowl = activeData.bowlFood || 0;
+    if (currentBowl <= 0) return;
+    const eatenG = Math.round(currentBowl / 2);
+    const remainingG = currentBowl - eatenG;
+    const kcalAdded = Math.round(eatenG * 3.5);
+
+    updateActiveData((data) => ({
+      bowlFood: remainingG,
+      bowlStatus: "leftovers",
+      caloriesConsumed: (data.caloriesConsumed || 0) + kcalAdded,
+      activity: [
+        {
+          id: Date.now(),
+          time: fmtFull(new Date()),
+          label: `${activePet.name} ate ${eatenG}g (${remainingG}g leftovers remaining, +${kcalAdded} kcal)`,
+          amount: `+${kcalAdded} kcal`,
+          type: "eat",
+        },
+        ...data.activity,
+      ],
+    }));
+    setToast({
+      msg: `🥣 ${activePet.name} ate ${eatenG}g, leaving ${remainingG}g leftovers (+${kcalAdded} kcal).`,
+      type: "info",
+    });
+  };
+
+  // 5. Schedules
   const handleToggleSchedule = (id) => {
     updateActiveData((data) => ({
       schedules: data.schedules.map((s) => (s.id === id ? { ...s, active: !s.active } : s)),
@@ -1441,7 +1835,7 @@ export default function App() {
     setToast({ msg: `📅 Added new feeding schedule: ${scheduleItem.label} (${scheduleItem.portion}g)`, type: "info" });
   };
 
-  // 4. Vaccines
+  // 6. Vaccines
   const handleMarkVaccineDone = (vaccineId) => {
     updateActiveData((data) => ({
       vaccines: data.vaccines.map((v) =>
@@ -1474,7 +1868,7 @@ export default function App() {
     setToast({ msg: `📅 Vaccine rescheduled: ${newDue}`, type: "info" });
   };
 
-  // 5. Health Records & Weight
+  // 7. Health Records & Weight
   const handleAddRecord = (recordItem) => {
     updateActiveData((data) => ({
       records: [{ id: Date.now(), ...recordItem }, ...data.records],
@@ -1494,7 +1888,7 @@ export default function App() {
     setToast({ msg: `⚖️ Updated ${activePet.name}'s weight to ${newW} kg`, type: "success" });
   };
 
-  // 6. Add Pet
+  // 8. Add Pet
   const handleSaveNewPet = (newPetForm) => {
     const newId = Date.now();
     const newPetObj = {
@@ -1513,6 +1907,11 @@ export default function App() {
     const starterData = {
       foodLevel: 85,
       waterLevel: 95,
+      fedToday: 0,
+      waterToday: 0,
+      bowlFood: 0,
+      bowlStatus: "empty",
+      caloriesConsumed: 0,
       schedules: [
         { id: newId + 1, label: "Morning Breakfast", time: "08:00", ampm: "AM", portion: Math.round(newPetObj.weight * 3.5), active: true },
         { id: newId + 2, label: "Evening Dinner",    time: "06:30", ampm: "PM", portion: Math.round(newPetObj.weight * 3.5), active: true },
@@ -1526,7 +1925,7 @@ export default function App() {
           id: newId + 5,
           date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
           type: "Vet Visit",
-          note: `Profile initialized on Pet Pal IoT for ${newPetObj.name} (${newPetObj.breed}). Initial weight ${newPetObj.weight} kg.`,
+          note: `Profile initialized on PawSync IoT for ${newPetObj.name} (${newPetObj.breed}). Initial weight ${newPetObj.weight} kg.`,
         },
       ],
       activity: [
@@ -1566,7 +1965,7 @@ export default function App() {
               <div className="w-9 h-9 bg-gradient-to-br from-amber-400 to-amber-600 rounded-xl flex items-center justify-center shadow-md shadow-amber-200">
                 <PawPrint size={18} className="text-white" />
               </div>
-              <span className="text-lg font-black text-stone-800 tracking-tight">Pet Pal</span>
+              <span className="text-lg font-black text-stone-800 tracking-tight">PawSync</span>
             </div>
 
             {/* Desktop Navigation Tabs */}
@@ -1668,7 +2067,7 @@ export default function App() {
       </header>
 
       {/* ── Main Content Area ── */}
-      <main className="max-w-screen-xl mx-auto px-4 sm:px-6 pt-8">
+      <main className="max-w-screen-xl mx-auto px-4 sm:px-6 py-8">
         {/* Page Title & Subtitle */}
         <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
@@ -1676,7 +2075,7 @@ export default function App() {
               {tabs.find((t) => t.id === activeTab)?.label}
             </h1>
             <p className="text-sm text-stone-400 mt-0.5">
-              {activeTab === "home"   && `Managing ${activePet.name}'s smart feeder and fresh water reservoir in real-time`}
+              {activeTab === "home"   && `Managing ${activePet.name}'s smart feeder, load-cell sensor, and fresh water reservoir in real-time`}
               {activeTab === "sched"  && `Automated meal schedules configured for ${activePet.name}`}
               {activeTab === "health" && `Health records, immunization schedule, and clinical history for ${activePet.name}`}
               {activeTab === "ai"     && `AI-powered vet assistant — ask anything about ${activePet.name}'s wellness`}
@@ -1696,6 +2095,12 @@ export default function App() {
             data={activeData}
             onFeed={handleFeed}
             onDispenseWater={handleDispenseWater}
+            onRefillFood={handleRefillFood}
+            onRefillWater={handleRefillWater}
+            onPetAteAll={handlePetAteAll}
+            onPetAteHalf={handlePetAteHalf}
+            onFeedError={(msg) => setToast({ msg, type: "error" })}
+            onWaterError={(msg) => setToast({ msg, type: "error" })}
           />
         )}
         {activeTab === "sched" && (
@@ -1722,6 +2127,7 @@ export default function App() {
           <AiVetTab
             pet={activePet}
             vaccines={activeData.vaccines}
+            caloriesConsumed={activeData.caloriesConsumed}
           />
         )}
 
